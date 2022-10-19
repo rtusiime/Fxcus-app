@@ -622,7 +622,7 @@ and ast_ize_stmt_list (sl:parse_tree) : ast_sl =
   *)
   | _ -> raise (Failure "malformed parse tree in ast_ize_stmt_list")
 
-and ast_ize_stmt (s:parse_tree) : ast_sl =
+and ast_ize_stmt (s:parse_tree) : ast_s =
   match s with
   | PT_nt("S", _, [PT_id(lhs, vloc); PT_term(":=", aloc); expr])
       -> [AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
