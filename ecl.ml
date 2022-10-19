@@ -633,26 +633,61 @@ and ast_ize_stmt (s:parse_tree) : ast_sl =
   *)
   | _ -> raise (Failure "malformed parse tree in ast_ize_stmt")
 
-and ast_ize_expr (e:parse_tree) : ast_e =   (* C, E, T, or F *)
+and ast_ize_expr (e:parse_tree) : ast_e =   (* E, T, or F *)
   match e with
-  (*
-    NOTICE: your code here
-  *)
+  | PT_nt("E",_,[term; term_tail]) 
+    -> append (ast_ize_expr term) (ast_ize_expr_tail term_tail)
+  | PT_nt("T",_,[factor; factor_tail]) 
+    -> append (ast_ize_expr factor) (ast_ize_expr_tail factor_tail)
+    (* id *)
+  | PT_nt("F",_, [PT_id(v, vloc)]) 
+    -> [AST_id(v,idloc)]
+    (* int  or i_num *)
+  | PT_nt("F",_, [PT_int(nm, nmloc)]) 
+    -> [AST_int(nm,nmloc)]
+    (* real or r_num *)
+  | PT_nt("F",_, [PT_real(nm, nmloc)]) 
+    -> [AST_real(nm,nmloc)]
+    (* ( expr ) *)
+  | PT_nt("F",_, [PT_term("(",_); expr; PT_term(")",_)]) 
+    -> ast_ize_expr expr     (* NOT SURE ABOUT THIS *)
+        (* float ( expr ) *)
+  | PT_nt("F",_, [PT_term("float",lparenloc); expr]}) 
+    -> [AST_float((ast_ize_expr expr),lparenloc)]  (* NOT SURE ABOUT THIS *)
+        (* trunc ( expr ) *)
+  | PT_nt("F",_, [PT_term("trunc",lparenloc); expr]}) 
+    -> [AST_trunc((ast_ize_expr expr),lparenloc)]  (* NOT SURE ABOUT THIS *)
   | _ -> raise (Failure "malformed parse tree in ast_ize_expr")
 
-and ast_ize_expr_tail (lhs:ast_e) (tail:parse_tree) : ast_e =   (* ET,TT, or FT *)
+and ast_ize_expr_tail (lhs:ast_e) (tail:parse_tree) : ast_e =   (* ET,TT, or FT *)   (* what is ET????*)
   match tail with
-  (*
-    NOTICE: your code here
-  *)
+  | PT_nt("TT", _, []) -> []            (* end of list *)
+  | PT_nt("FT", _, []) -> []            (* end of list *)
+  | PT_nt("TT",_,[PT_Term("+",oploc); term; term_tail]) 
+    -> AST_binop("+", (ast_ize_expr term), (ast_ize_expr_tail term_tail), oploc)
+  | PT_nt("TT",_,[PT_Term("-",oploc); term; term_tail]) 
+    -> AST_binop("+", (ast_ize_expr term), (ast_ize_expr_tail term_tail), oploc)
+  | PT_nt("FT",_,[PT_Term("",oploc); term; term_tail]) 
+    -> AST_binop("/", (ast_ize_expr term), (ast_ize_expr_tail term_tail), oploc)
+  | PT_nt("FT",_,[PT_Term("-",oploc); term; term_tail]) 
+    -> AST_binop("*", (ast_ize_expr term), (ast_ize_expr_tail term_tail), oploc)
   | _ -> raise (Failure "malformed parse tree in ast_ize_expr_tail")
 
 and ast_ize_cond (c:parse_tree) : ast_e =
   match c with
-  (*
-    NOTICE: your code here
-  *)
-  | _ -> raise (Failure "malformed parse tree in ast_ize_cond")
+  | PT_nt("C",_,[expr1; PT_Term("<", oploc); expr2]) 
+    -> AST_binop("<", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | PT_nt("C",_,[expr1; PT_Term(">",_); expr2]) 
+    -> AST_binop(">", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | PT_nt("C",_,[expr1; PT_Term("<>",_); expr2]) 
+    -> AST_binop("<>", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | PT_nt("C",_,[expr1; PT_Term("==",_); expr2]) 
+    -> AST_binop("==", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | PT_nt("C",_,[expr1; PT_Term("<=",_); expr2]) 
+    -> AST_binop("<=", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | PT_nt("C",_,[expr1; PT_Term(">=",_); expr2]) 
+    -> AST_binop(">=", (ast_ize_expr expr1), (ast_ize_expr expr2), oploc)
+  | _ -> raise (Failure "malformed parse tree in ast_ize_expr_cond")
 ;;
 
 (*******************************************************************
