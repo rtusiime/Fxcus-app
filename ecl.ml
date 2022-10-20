@@ -637,8 +637,8 @@ and ast_ize_stmt (s:parse_tree) : ast_sl =
     -> [AST_r_dec(tp,dloc); AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
   (* read TP id *)
   (* NOT SURE ABOUT THIS, NEED REVISION *)
-  | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,tp); PT_id(id,idloc)])
-    -> [AST_read("write",idloc)]
+  | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,[PT_int(tp,tploc)]); PT_id(id,idloc)])
+    -> [AST_i_dec(tp,tploc); AST_read(id,idloc)]
   (* write E *)
   | PT_nt("S", _, [PT_term("write",wloc); expr])
     -> [AST_write((ast_ize_expr expr))]
@@ -652,27 +652,48 @@ and ast_ize_stmt (s:parse_tree) : ast_sl =
 
 and ast_ize_expr (e:parse_tree) : ast_e =   (* C, E, T, or F *)
   match e with
-  (* | ("C",_,_) -> (ast_ize_expr first) new_ast_node "RO" (ast_ize_expr third)
-  | (s,(r,c),head::tail) -> ast_glue (ast_ize_expr head) (ast_ize_expr_tail tail)
-    if h = T then ...
-    else ... *)
-  (*
-    NOTICE: your code here
-  *)
+  | PT_nt("E",_,[term; term_tail]) 
+    -> ast_ize_expr_tail (ast_ize_expr term) term_tail
+  | PT_nt("T",_,[factor; factor_tail]) 
+    -> ast_ize_expr_tail (ast_ize_expr factor) factor_tail
+    (* id *)
+  | PT_nt("F",_, [PT_id(v, vloc)]) 
+    -> AST_id(v,vloc)
+    (* int  or i_num *)
+  | PT_nt("F",_, [PT_int(nm, nmloc)]) 
+    -> AST_int(nm,nmloc)
+    (* real or r_num *)
+  | PT_nt("F",_, [PT_real(nm, nmloc)]) 
+    -> AST_real(nm,nmloc)
+    (* ( expr ) *)
+  | PT_nt("F",_, [PT_term("(",_); expr; PT_term(")",_)]) 
+    -> (ast_ize_expr expr)
+        (* float ( expr ) *)
+  | PT_nt("F",_, [PT_term("float",floc); PT_term("(",_); expr; PT_term(")",_)]) 
+    -> AST_float((ast_ize_expr expr),floc)
+        (* trunc ( expr ) *)
+  | PT_nt("F",_, [PT_term("trunc",tloc); PT_term("(",_); expr; PT_term(")",_);]) 
+    -> AST_trunc((ast_ize_expr expr),tloc) (* NOT SURE ABOUT THIS *)
   | _ -> raise (Failure "malformed parse tree in ast_ize_expr")
 
 and ast_ize_expr_tail (lhs:ast_e) (tail:parse_tree) : ast_e =   (* ET,TT, or FT *)
   match tail with
-  (*
-    NOTICE: your code here
-  *)
+  | PT_nt ("TT", _, []) -> lhs        (* end of list *)
+  | PT_nt("FT", _, []) -> lhs          (* end of list *)
+  | PT_nt("TT",_,[PT_term("+",oploc); term; term_tail]) 
+    -> AST_binop("+", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
+  | PT_nt("TT",_,[PT_term("-",oploc); term; term_tail]) 
+    -> AST_binop("+", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
+  | PT_nt("FT",_,[PT_term("*",oploc); term; term_tail]) 
+    -> AST_binop("/", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
+  | PT_nt("FT",_,[PT_term("/",oploc); term; term_tail]) 
+    -> AST_binop("*", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
   | _ -> raise (Failure "malformed parse tree in ast_ize_expr_tail")
 
 and ast_ize_cond (c:parse_tree) : ast_e =
   match c with
-  (*
-    NOTICE: your code here
-  *)
+  | PT_nt("C",_,[lexpr; PT_nt("RO",_,[PT_term(ro,roloc)]); rexpr])
+    -> AST_binop(ro, (ast_ize_expr lexpr), (ast_ize_expr rexpr), roloc)
   | _ -> raise (Failure "malformed parse tree in ast_ize_cond")
 ;;
 
@@ -822,8 +843,7 @@ let insert_st (id:string) (t:tp) (st:symtab) : symtab * bool =
       | None   ->
           ({ scopes     =
                { variables = (id, t, new_mem_addr ()) :: scope.variables }
-               :: surround },
-           true);;
+               :: surround }, true);;
 
 (* Look id up in symbol table.  If not found, insert to limit redundant
    subsequent errors. *)
