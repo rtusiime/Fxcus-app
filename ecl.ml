@@ -591,7 +591,7 @@ let ecg_parse_table = get_parse_table ecg;;
 type ast_sl = ast_s list
 and ast_s =
 | AST_error
-| AST_i_dec of (string * row_col)       (* id location *)
+| AST_i_dec of (string * row_col)       (* id location *) [AST_i_dec("int",id_loc); AST_id(id,id_loc)] -> [AST_i_dec(id,id_loc)]
 | AST_r_dec of (string * row_col)       (* id location *)
 | AST_read of (string * row_col)        (* id location *)
 | AST_write of (ast_e)
@@ -607,7 +607,7 @@ and ast_e =
 | AST_trunc of (ast_e * row_col)        (* lparen location *)
 | AST_binop of (string * ast_e * ast_e * row_col);;
                                         (* op location *)
-  
+                                     
 (* Convert parse tree to syntax tree.
    Walks the parse tree using a collection of mutually recursive subroutines. *)
 let rec ast_ize_prog (p:parse_tree) : ast_sl =
@@ -630,15 +630,17 @@ and ast_ize_stmt (s:parse_tree) : ast_sl =
          (* vloc (Value Location)is the place to complain about undeclared lhs;
             aloc (Assign Location) (:= sign) is the place to complain about a type clash *)
   (* int id := expr *)
-  | PT_nt("S", _, [PT_int(tp,dloc); PT_id(lhs, vloc); PT_term(":=", aloc); expr])
-    -> [AST_i_dec(tp,dloc); AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
+  | PT_nt("S", _, [PT_term("int",dloc); PT_id(lhs, vloc); PT_term(":=", aloc); expr])
+    -> [AST_i_dec(lhs,vloc); AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
   (* real id := expr *)
-  | PT_nt("S", _, [PT_real(tp,dloc); PT_id(lhs, vloc); PT_term(":=", aloc); expr])
-    -> [AST_r_dec(tp,dloc); AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
+  | PT_nt("S", _, [PT_term("real",dloc); PT_id(lhs, vloc); PT_term(":=", aloc); expr])
+    -> [AST_r_dec(lhs,vloc); AST_assign(lhs, (ast_ize_expr expr), vloc, aloc)]
   (* read TP id *)
   (* NOT SURE ABOUT THIS, NEED REVISION *)
-  | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,[PT_int(tp,tploc)]); PT_id(id,idloc)])
-    -> [AST_i_dec(tp,tploc); AST_read(id,idloc)]
+  | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,[PT_term("int",tploc)]); PT_id(id,idloc)])
+    -> [AST_i_dec(id,idloc); AST_read(id,idloc)]
+  | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,[PT_term("real",tploc)]); PT_id(id,idloc)])
+    -> [AST_r_dec(id,idloc); AST_read(id,idloc)]
   (* write E *)
   | PT_nt("S", _, [PT_term("write",wloc); expr])
     -> [AST_write((ast_ize_expr expr))]
@@ -678,17 +680,13 @@ and ast_ize_expr (e:parse_tree) : ast_e =   (* C, E, T, or F *)
 
 and ast_ize_expr_tail (lhs:ast_e) (tail:parse_tree) : ast_e =   (* ET,TT, or FT *)
   match tail with
-  | PT_nt ("TT", _, []) -> lhs        (* end of list *)
-  | PT_nt("FT", _, []) -> lhs          (* end of list *)
-  | PT_nt("TT",_,[PT_term("+",oploc); term; term_tail]) 
-    -> AST_binop("+", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
-  | PT_nt("TT",_,[PT_term("-",oploc); term; term_tail]) 
-    -> AST_binop("+", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
-  | PT_nt("FT",_,[PT_term("*",oploc); term; term_tail]) 
-    -> AST_binop("/", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
-  | PT_nt("FT",_,[PT_term("/",oploc); term; term_tail]) 
-    -> AST_binop("*", lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
-  | _ -> raise (Failure "malformed parse tree in ast_ize_expr_tail")
+    | PT_nt ("TT", _, []) -> lhs     (* end of list *)
+    | PT_nt("FT", _, []) -> lhs          (* end of list *)
+    | PT_nt("TT",_,[PT_nt("AO",_,[PT_term(ao,oploc)]); term; term_tail]) 
+      -> AST_binop(ao, lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
+    | PT_nt("FT",_,[PT_nt("MO",_,[PT_term(mo,oploc)]); term; term_tail]) 
+      -> AST_binop(mo, lhs, (ast_ize_expr_tail (ast_ize_expr term) term_tail), oploc)
+    | _ -> raise (Failure "malformed parse tree in ast_ize_expr_tail")
 
 and ast_ize_cond (c:parse_tree) : ast_e =
   match c with
@@ -938,6 +936,13 @@ int main() {\n\
 (* Like most of the translate_X routines, translate_sl accumulates code
    and error messages into string lists.  We stitch these together with
    intervening carriage returns at the end, in translate_ast. *)
+let id_check (id: string) (is_dec: bool) (loc: row_col) (st:symtab)
+(* KEV *)
+let type_clash_check
+(* ET *)
+let unary_check
+(* ET *)
+
 let rec translate_sl (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
@@ -950,15 +955,25 @@ let rec translate_sl (sl:ast_sl) (st:symtab)
       if errs = [] then (st3, s_code @ sl_code, [])
       else (st3, [], errs)
 
+(* KEV *)
 and translate_s (s:ast_s) (st:symtab)
     : (symtab * string list * string list) =
     (* new symtab, code, error messages *)
   match s with
+  | AST_i_dec(id,idloc) -> 
+    let error_message = semantic_check id true idloc st in 
   (*
     NOTICE: your code here
   *)
   | _ -> st, [], []
 
+  (* read type id *)
+  (* 1. id is never declared -> insert id into symtable *)
+  (* 2. id is declared in current scope -> complaint, diable translation*)
+  (* 3. id is declared in the surround scope, bind the variable in the current scope, and leave the original binding untouch *)
+  (* read id *)
+  (* 1. id is declared -> do nothing *)
+  (* 2. id is declared before -> complaint, diable translation*)
 and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
@@ -976,7 +991,8 @@ and translate_write (expr:ast_e) (st:symtab)
     NOTICE: your code here
   *)
   (st, [], [])
-
+(* END KEV *)
+(* BEGIN ET *)
 and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
@@ -988,6 +1004,8 @@ and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:s
 and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
+    (* NEED ID CHECK *)
+    (* NEED OPERAND CHECK  *)
   match c with      (* sanity check *)
   | AST_binop(_, _, _, _) ->
   (*
@@ -1013,7 +1031,7 @@ and translate_expr (expr:ast_e) (st:symtab)
     NOTICE: your code here
   *)
   | _ -> (st, Unknown, [], {text = ""; kind = Atom}, [])
-
+(* END ET *)
 (* Perform static checks on AST.  Return output code and error messages as
    glued-together strings.  Empty error string means tree was error free. *)
 let translate_ast (ast:ast_sl) : int * int * string * string =
@@ -1091,8 +1109,9 @@ let sqrt_prog = "
     end;
     write l;";;
 
-let ecg_ast prog = ast_ize_prog (parse ecg_parse_table prog);;
-let ecg_code prog = translate_ast (ecg_ast prog);;
+
+let ecg_ast prog = ast_ize_prog (parse ecg_parse_table prog);;  
+let ecg_code prog = translate_ast (ecg_ast prog);; 
 
 let sum_ave_parse_tree = parse ecg_parse_table sum_ave_prog;;
 let sum_ave_syntax_tree = ast_ize_prog sum_ave_parse_tree;;
