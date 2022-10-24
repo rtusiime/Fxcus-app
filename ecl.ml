@@ -965,7 +965,7 @@ and translate_s (s:ast_s) (st:symtab)
                              else (new_st, [""],["redifinition of " ^id ^ " at "^(string_of_int 1) ^ " "^ (string_of_int 2) ]) (* Update back to row and col *)
   | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
                              if inserted then (new_st, ["real"], [""])
-                             else (new_st, [""],["redifinition of " ^id ^ " "^(string_of_int row) ^ " "^ (string_of_int col)])
+                             else (new_st, [""],["redifinition of " ^id ^ " "^(string_of_int 1) ^ " "^ (string_of_int 2)])
   | AST_read(id, idloc) ->   translate_read id idloc st
   | AST_write(expr)     ->   translate_write expr st
   | AST_if(expr , sl)   ->   translate_if expr sl st
