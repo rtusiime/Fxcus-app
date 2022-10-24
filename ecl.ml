@@ -959,10 +959,10 @@ and translate_s (s:ast_s) (st:symtab)
     : (symtab * string list * string list) =
     (* new symtab, code, error messages *)
   match s with
-  | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert id Int st) in
+  | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Int st) in
                              if inserted then (new_st, ["int"], [""])
                              else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
-  | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert id Real st) in
+  | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
                              if inserted then (new_st, ["real"], [""])
                              else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
   | AST_read(id, idloc) ->   translate_read id idloc st
