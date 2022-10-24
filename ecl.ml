@@ -960,7 +960,7 @@ and translate_s (s:ast_s) (st:symtab)
     (* new symtab, code, error messages *)
   match s with
   | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Int st) in
-                             let (row, col = idloc in
+                             let row, col = idloc in
                              if inserted then (new_st, ["int"], [""])
                              else (new_st, [""],["redifinition of " ^id ^ " at "^(string_of_int row) ^ " "^ (string_of_int col) ])
   | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
