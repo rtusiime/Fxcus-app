@@ -991,7 +991,7 @@ and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
   let (new_st, typ, setup_code , oper, err_msg) = translate_expr expr st in
-    (st, setup_code, [err_msg])
+    (st, setup_code, err_msg)
 (* END KEV *)
 
 
