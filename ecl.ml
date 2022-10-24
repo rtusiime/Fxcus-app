@@ -591,7 +591,7 @@ let ecg_parse_table = get_parse_table ecg;;
 type ast_sl = ast_s list
 and ast_s =
 | AST_error
-| AST_i_dec of (string * row_col)       (* id location *) [AST_i_dec("int",id_loc); AST_id(id,id_loc)] -> [AST_i_dec(id,id_loc)]
+| AST_i_dec of (string * row_col)       (* id location  [AST_i_dec("int",id_loc); AST_id(id,id_loc)] -> [AST_i_dec(id,id_loc)] *)
 | AST_r_dec of (string * row_col)       (* id location *)
 | AST_read of (string * row_col)        (* id location *)
 | AST_write of (ast_e)
@@ -936,11 +936,11 @@ int main() {\n\
 (* Like most of the translate_X routines, translate_sl accumulates code
    and error messages into string lists.  We stitch these together with
    intervening carriage returns at the end, in translate_ast. *)
-let id_check (id: string) (is_dec: bool) (loc: row_col) (st:symtab)
+(* let id_check (id: string) (is_dec: bool) (loc: row_col) (st:symtab) *)
 (* KEV *)
-let type_clash_check
+(* let type_clash_check *)
 (* ET *)
-let unary_check
+(* let unary_check *)
 (* ET *)
 
 let rec translate_sl (sl:ast_sl) (st:symtab)
@@ -955,16 +955,20 @@ let rec translate_sl (sl:ast_sl) (st:symtab)
       if errs = [] then (st3, s_code @ sl_code, [])
       else (st3, [], errs)
 
-(* KEV *)
 and translate_s (s:ast_s) (st:symtab)
     : (symtab * string list * string list) =
     (* new symtab, code, error messages *)
   match s with
-  | AST_i_dec(id,idloc) -> 
-    let error_message = semantic_check id true idloc st in 
-  (*
-    NOTICE: your code here
-  *)
+  | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert id Int st) in
+                             if inserted then (new_st, ["int"], [""])
+                             else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
+  | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert id Real st) in
+                             if inserted then (new_st, ["real"], [""])
+                             else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
+  | AST_read(id, idloc) ->   translate_read id idloc st
+  | AST_write(expr)     ->   translate_write expr st
+  | AST_if(expr , sl)   ->   translate_if expr sl st
+  | AST_while(expr, sl) ->   translate_while expr sl st
   | _ -> st, [], []
 
   (* read type id *)
@@ -977,21 +981,19 @@ and translate_s (s:ast_s) (st:symtab)
 and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-  let (_, _, _, _) = lookup_st id st loc in
-  (*
-    NOTICE: your code here
-  *)
-  (st, [], [])
+  let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
+  match typ with
+  | Unknown -> (sym_tab, [""], err_msg) 
+  | _       -> (sym_tab, [targ_code], [err_msg])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-  let (_, _, _, _, _) = translate_expr expr st in
-  (*
-    NOTICE: your code here
-  *)
-  (st, [], [])
+  let (new_st, typ, setup_code , oper, err_msg) = translate_expr expr st in
+    (st, setup_code, err_msg)
 (* END KEV *)
+
+
 (* BEGIN ET *)
 and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:symtab)
     : symtab * string list * string list =
