@@ -984,14 +984,14 @@ and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     (* new symtab, code, error messages *)
   let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
   match typ with
-  | Unknown -> (sym_tab, [""], err_msg) 
+  | Unknown -> (sym_tab, [""], [err_msg]) 
   | _       -> (sym_tab, [targ_code], [""])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
   let (new_st, typ, setup_code , oper, err_msg) = translate_expr expr st in
-    (st, setup_code, err_msg)
+    (st, setup_code, [err_msg])
 (* END KEV *)
 
 
