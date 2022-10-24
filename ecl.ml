@@ -960,11 +960,12 @@ and translate_s (s:ast_s) (st:symtab)
     (* new symtab, code, error messages *)
   match s with
   | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Int st) in
+                             let (row, col) = idloc in
                              if inserted then (new_st, ["int"], [""])
-                             else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
+                             else (new_st, [""],["redifinition of " ^id ^ " at "^row ^ " "^ col])
   | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
                              if inserted then (new_st, ["real"], [""])
-                             else (new_st, [""],["redifinition of " ^id ^ " at "^idloc])
+                             else (new_st, [""],["redifinition of " ^id ^ " at "^row ^ " "^ col])
   | AST_read(id, idloc) ->   translate_read id idloc st
   | AST_write(expr)     ->   translate_write expr st
   | AST_if(expr , sl)   ->   translate_if expr sl st
