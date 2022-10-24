@@ -852,7 +852,7 @@ let lookup_st (id:string) (st:symtab) (loc:row_col)
     match scope_stack with
     | [] -> let (new_st, stat) = (insert_st id Unknown st) in
             if stat then (Unknown, "", (complaint loc (id ^ " not found")), new_st)
-                    else raise (Failure (id ^ " found but unexpected"))
+                    else raise (Failure (id ^ " found but unexpected")) 
     | scope :: surround ->
         match find_opt (name_match_st id) scope.variables with
         | Some (_, t, a) ->
@@ -984,7 +984,7 @@ and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
   let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
   match typ with
   | Unknown -> (sym_tab, [""], err_msg) 
-  | _       -> (sym_tab, [targ_code], [err_msg])
+  | _       -> (sym_tab, [targ_code], [""])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
