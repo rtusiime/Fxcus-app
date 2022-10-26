@@ -591,7 +591,7 @@ let ecg_parse_table = get_parse_table ecg;;
 type ast_sl = ast_s list
 and ast_s =
 | AST_error
-| AST_i_dec of (string * row_col)       (* id location *) [AST_i_dec("int",id_loc); AST_id(id,id_loc)] -> [AST_i_dec(id,id_loc)]
+| AST_i_dec of (string * row_col)       (* id location [AST_i_dec("int",id_loc); AST_id(id,id_loc)] -> [AST_i_dec(id,id_loc)] *)
 | AST_r_dec of (string * row_col)       (* id location *)
 | AST_read of (string * row_col)        (* id location *)
 | AST_write of (ast_e)
@@ -641,6 +641,8 @@ and ast_ize_stmt (s:parse_tree) : ast_sl =
     -> [AST_i_dec(id,idloc); AST_read(id,idloc)]
   | PT_nt("S", _, [PT_term("read",rloc); PT_nt("TP",_,[PT_term("real",tploc)]); PT_id(id,idloc)])
     -> [AST_r_dec(id,idloc); AST_read(id,idloc)]
+    | PT_nt("S", _, [PT_term("read",rloc); PT_id(id,idloc)])
+    -> [AST_read(id,idloc)]
   (* write E *)
   | PT_nt("S", _, [PT_term("write",wloc); expr])
     -> [AST_write((ast_ize_expr expr))]
@@ -779,23 +781,24 @@ type scope_info =
     variables : (string * tp * int) list
   };;
 type symtab =
-  { (*
-        NOTICE: extra field(s) here?
-    *)
+  { 
+    max_var : int;
+    max_temp : int;
     scopes     : scope_info list
   };;
-let empty_symtab = { scopes = [] };;
+let empty_symtab = { scopes = []; max_var=0; max_temp=0 };;
 
 (* Open a new scope, in which variable names can be reused. *)
 let new_scope (st:symtab) : symtab =
-  { scopes     = { variables = [] } :: st.scopes };;
+  { scopes     = { variables = [] } :: st.scopes; max_var = 0; max_temp = 0 };;
 
 (* Executed at end of statement list to erase variables from table. *)
 let end_scope (st:symtab) : symtab =
   let ss = match st.scopes with
            | []            -> raise (Failure "no scopes left to pop")
            | _ :: surround -> surround in
-  { scopes     = ss }
+  (* Not sure about this *)
+  { scopes     = ss; max_var = st.max_var; max_temp=st.max_temp }
 
 (* An expression in the extended calculator language can appear
    - as an operand in a bigger expression -- arithmetic, comparison, float/trunc
@@ -825,9 +828,9 @@ let name_match_st id = fun (sym, _, _) -> id = sym;;
     addresses for variables.  These routines are placeholders for
     functionality that you probably want to roll into the symbol table.
 *)
-let new_mem_addr () = 0;;
-let max_mem_addr () = 0;;
-let max_temp_addr () = 0;;
+let new_mem_addr (st: symtab) = st.max_var + 1;;
+let max_mem_addr (st: symtab) = st.max_var;;
+let max_temp_addr (st: symtab) = st.max_temp;;
 
 (* Insert id with type t and a newly chosen address into current scope
    in symbol table if not already present; return updated symtab and
@@ -840,8 +843,8 @@ let insert_st (id:string) (t:tp) (st:symtab) : symtab * bool =
       | Some _ -> (st, false)
       | None   ->
           ({ scopes     =
-               { variables = (id, t, new_mem_addr ()) :: scope.variables }
-               :: surround }, true);;
+               { variables = (id, t, new_mem_addr (st)) :: scope.variables }
+               :: surround; max_var = st.max_var+1; max_temp = st.max_temp}, true);;
 
 (* Look id up in symbol table.  If not found, insert to limit redundant
    subsequent errors. *)
@@ -933,15 +936,104 @@ int main() {\n\
     Actual translator.
 ********)
 
+(* All sorts of helper function to make life easier *)
+
+let type_to_string (i: tp) : string = 
+  match i with
+  | Int -> "int"
+  | Real -> "real"
+  | Unknown -> "unknown";;
+
 (* Like most of the translate_X routines, translate_sl accumulates code
    and error messages into string lists.  We stitch these together with
    intervening carriage returns at the end, in translate_ast. *)
-let id_check (id: string) (is_dec: bool) (loc: row_col) (st:symtab)
-(* KEV *)
-let type_clash_check
+(* Helper function to check type of expr *)
+let rec get_expr_type (expr: ast_e) (st: symtab) : tp * string list * symtab=
+                                    (* type * error_msgs, new symtab *)
+  match expr with 
+  | AST_int(nm, nm_loc) -> Int, [], st
+  | AST_real(nm, nm_loc) -> Real, [], st
+  | AST_id(r_id, rid_loc) ->
+    let r_tp, _, id_err, new_st = lookup_st r_id st rid_loc in
+    (match id_err with
+    | "" -> r_tp, [], st
+    | _ -> r_tp, [id_err], new_st) 
+  | AST_float(s_expr, floc) -> 
+    (* TODO: unary check *)
+    (* float(s_expr) *)
+    (* s_expr -> id *)
+    let unary_errors, s_expr_tp, new_st = unary_check s_expr floc Int st in
+    (match s_expr_tp with
+    | Unknown -> Unknown, unary_errors, new_st
+    | _ -> Real, [], st)
+  | AST_trunc(s_expr, tloc) -> 
+    let unary_errors, s_expr_tp, new_st = unary_check s_expr tloc Real st in
+    (match s_expr_tp with
+    | Unknown -> Unknown, unary_errors, new_st
+    | _ -> Int, [], st)
+  | AST_binop(op, left_sub_expr, right_sub_expr, op_loc) ->
+    let binary_errors, exprs_tp, new_st = binary_check left_sub_expr right_sub_expr op_loc st in
+    (match exprs_tp with
+    | Unknown -> Unknown, binary_errors, new_st
+    | _ -> exprs_tp, [], st)
+  
 (* ET *)
-let unary_check
-(* ET *)
+and unary_check (expr: ast_e) (op_loc: row_col) (op_tp: tp) (st: symtab): string list * tp * symtab = 
+  let (expr_tp, expr_errors, new_expr_st) = get_expr_type expr st in
+  match expr_tp with
+  (* invalid type in evaluating expr, throw expr eror but not type crash *)
+  | Unknown -> (expr_errors, Unknown, new_expr_st)
+  (* type match, no errors*)
+  | op_tp -> [], expr_tp, st
+  (* type conflict, add conflict *)
+  | _ -> 
+    (match op_tp with 
+    | Int -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to float()")], Unknown, st
+    | Real -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to trunc()")], Unknown, st)
+
+and binary_check (lhs: ast_e) (rhs: ast_e) (op_loc: row_col) (st: symtab)
+  :string list * tp * symtab =
+  let (l_tp, lexpr_errors, new_lexpr_st) = get_expr_type lhs st in
+  let (r_tp, rexpr_errors, new_rexpr_st) = get_expr_type rhs new_lexpr_st in
+  let merged_errors = (append lexpr_errors rexpr_errors) in 
+  match r_tp with 
+  | Unknown -> merged_errors, Unknown, new_lexpr_st 
+  | l_tp -> [], l_tp, st
+  | _ ->
+    (match l_tp with 
+    | Unknown -> 
+      (cons (complaint op_loc ("invalid operation between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))) lexpr_errors), 
+        Unknown ,new_lexpr_st
+    | _ -> [(complaint op_loc "invalid opeartion between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))], l_tp, st )
+
+
+ (* error checking routine *)
+ (* Assume input is already checked with id_check *)
+and type_clash_assign_check (id: string) (id_loc: row_col) (rhs: ast_e) 
+  (assign_loc: row_col) (st: symtab)
+  : string list * symtab =
+  (* error_msg, new symtab, pass_check? *)
+  (* let helper (assign_loc: row_col): string =
+    complaint assign_loc "type crash" in  *)
+  let (l_tp, _, id_errors, new_id_st) = lookup_st id st id_loc in
+  let (r_tp, expr_errors, new_expr_st) = get_expr_type rhs new_id_st in 
+  let merged_errors = cons id_errors expr_errors in
+  match r_tp with
+  | Unknown -> merged_errors, new_id_st
+  | l_tp -> [], st
+  | _ -> 
+    (match l_tp with
+    | Unknown -> [(complaint assign_loc "invalid assign between "^ (type_to_string l_tp) ^ " and "^(type_to_string r_tp)); id_errors], new_id_st
+    | _ -> [(complaint assign_loc "invalid assign between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))], st);;
+    
+(* and id_check (id: string) (id_loc: row_col) (st: symtab)
+    : string list * symtab = 
+    let r_tp, _, id_err, new_st = lookup_st r_id st rid_loc in
+    (match id_err with
+    | "" -> r_tp, [], st
+    | _ -> r_tp, [id_err], new_st);; *)
+
+
 
 let rec translate_sl (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
@@ -959,13 +1051,20 @@ let rec translate_sl (sl:ast_sl) (st:symtab)
 and translate_s (s:ast_s) (st:symtab)
     : (symtab * string list * string list) =
     (* new symtab, code, error messages *)
-  match s with
-  | AST_i_dec(id,idloc) -> 
-    let error_message = semantic_check id true idloc st in 
-  (*
-    NOTICE: your code here
-  *)
-  | _ -> st, [], []
+    match s with
+    | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Int st) in
+                             let row, col = idloc in
+                             if inserted then (new_st, ["i[current_max(new_st)]"], [""])
+                             else (new_st, [""],["redifinition of " ^id ^ " at "^(string_of_int 1) ^ " "^ (string_of_int 2) ]) (* Update back to row and col *)
+    | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
+                                if inserted then (new_st, ["real"], [""])
+                                else (new_st, [""],["redifinition of " ^id ^ " "^(string_of_int 1) ^ " "^ (string_of_int 2)])
+    | AST_read(id, idloc) ->   translate_read id idloc st
+    | AST_write(expr)     ->   translate_write expr st
+    | AST_if(expr , sl)   ->   translate_if expr sl st
+    | AST_while(expr, sl) ->   translate_while expr sl st
+    | _ -> st, [], []
+  
 
   (* read type id *)
   (* 1. id is never declared -> insert id into symtable *)
@@ -977,28 +1076,29 @@ and translate_s (s:ast_s) (st:symtab)
 and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-  let (_, _, _, _) = lookup_st id st loc in
-  (*
-    NOTICE: your code here
-  *)
-  (st, [], [])
+    let (_, _, _, _) = lookup_st id st loc in
+    let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
+    match typ with
+    | Unknown -> (sym_tab, [""], [err_msg]) 
+    | _       -> (sym_tab, [targ_code], [""])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-  let (_, _, _, _, _) = translate_expr expr st in
-  (*
-    NOTICE: your code here
-  *)
-  (st, [], [])
-(* END KEV *)
-(* BEGIN ET *)
+    let (new_st, typ, setup_code , oper, err_msg) = translate_expr expr st in
+    (st, setup_code, err_msg)
+
+
+(* Assign logic *)
+(* id value check for id and type crash check for left right expr*)
 and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:symtab)
     : symtab * string list * string list =
-    (* new symtab, code, error messages *)
-  (*
-    NOTICE: your code here
-  *)
+  (* let errors, new_st = type_clash_assign_check id vloc rhs aloc st in
+  match errors with 
+  | [] -> 
+
+  | _ -> new_st, [], errors *)
+
   (st, [], [])
 
 and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
@@ -1024,20 +1124,67 @@ and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
 
 and translate_expr (expr:ast_e) (st:symtab)
     : symtab * tp * string list * operand * string list =
-    (* new symtab, type, setup code, self, error messages *)
+    (* st, type, setup code, self, errors *)
   match expr with
-  | AST_int(i, _)            -> (st, Int, [], {text = i; kind = Atom}, [])
-  (*
-    NOTICE: your code here
-  *)
+  | AST_int(i, _) -> (st, Int, [], {text = i; kind = Atom}, [])
+  | AST_real(i,_) -> (st, Real, [], {text = i; kind = Atom}, [])
+  | AST_id(i,_)  -> 
+    let (i_tp, errors, new_st) = get_expr_type expr st in
+    (match errors with
+    | [] -> (st, i_tp, [], {text = i; kind = Atom}, [])
+    | _ -> (new_st, i_tp, [], {text = i; kind = Atom}, errors)) (* In this case i_tp will be Unknown *)
+  (* Always put complex expr in tempories *)
+  | AST_float(s_expr,_) ->
+    let (expr_tp, errors, new_st) = get_expr_type expr st in
+    (match errors with
+    | [] -> 
+      let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
+      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes} in
+      let temp_address = max_temp_addr result_st in 
+      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
+      let result_setup = sub_setup@[result_text^" = to_real("^sub_op.text^");"] in
+      let result_operand = {text=result_text; kind = Temp(temp_address)} in
+      (result_st, Real, result_setup, result_operand, [])
+    | _ -> (new_st, Unknown, [], {text = "err"; kind = Atom}, errors))
+  | AST_trunc(s_expr,_) ->
+    let (expr_tp, errors, new_st) = get_expr_type expr st in
+    (match errors with
+    | [] -> 
+      let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
+      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes} in
+      let temp_address = max_temp_addr result_st in 
+      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
+      let result_setup = sub_setup@[result_text^" = to_int("^sub_op.text^");"] in
+      let result_operand = {text=result_text; kind = Temp(temp_address)} in
+      (result_st, Real, result_setup, result_operand, [])
+    | _ -> (new_st, Unknown, [], {text = "err"; kind = Atom}, errors))
+  | AST_binop(op, lexpr,rexpr,_) ->
+    let (lexpr_tp, lerrors, lnew_st) = get_expr_type lexpr st in
+    let (rexpr_tp, rerrors, rnew_st) = get_expr_type rexpr lnew_st in
+    (match (lerrors,rerrors) with
+    (* Both expr are valid *)
+    | [],[] -> 
+      let rsub_st, rsub_tp, rsub_setup, rsub_op, rsub_errors = translate_expr rexpr st in
+      let lsub_st, lsub_tp, lsub_setup, lsub_op, lsub_errors = translate_expr lexpr rsub_st in
+      let result_st = {max_var=rsub_st.max_var; max_temp=rsub_st.max_temp+1; scopes=rsub_st.scopes} in
+      let temp_address = max_temp_addr result_st in 
+      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      let result_setup = rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
+      let result_operand = {text=result_text; kind = Temp(temp_address)} in
+      (result_st, lsub_tp, result_setup, result_operand, [])
+    | _,[] -> (lnew_st, Unknown, [], {text="err"; kind=Atom}, lerrors)
+    | [],_ -> (rnew_st, Unknown, [], {text="err"; kind=Atom},rerrors)
+    | _,_ -> (rnew_st, Unknown, [], {text="err"; kind=Atom},(lerrors@rerrors)))
   | _ -> (st, Unknown, [], {text = ""; kind = Atom}, [])
-(* END ET *)
+
 (* Perform static checks on AST.  Return output code and error messages as
    glued-together strings.  Empty error string means tree was error free. *)
 let translate_ast (ast:ast_sl) : int * int * string * string =
                                (* max_addr, max_temp, code, error messages *)
   let (st, sl_code, sl_errs) = translate_sl ast (new_scope empty_symtab) in
-  ( max_mem_addr (), max_temp_addr (),
+  ( max_mem_addr (st), max_temp_addr (st),
     (fold_left (str_cat "\n ") "" sl_code),
     (fold_left (str_cat "\n ") "" sl_errs) );;
 
@@ -1153,4 +1300,7 @@ let main () =
 if !Sys.interactive then () else main ();;
 
 
-let p = "a:=1;";;
+let p = "int a := 1;";;
+let id1 = AST_int("1",(1,1));;
+let operation = AST_binop("*",id1,id1,(1,1));;
+let result = translate_expr operation empty_symtab;;
