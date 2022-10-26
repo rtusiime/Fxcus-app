@@ -1052,15 +1052,17 @@ and translate_s (s:ast_s) (st:symtab)
     : (symtab * string list * string list) =
     (* new symtab, code, error messages *)
     match s with
-    | AST_i_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Int st) in
-                             let row, col = idloc in
-                             if inserted then (new_st, ["i[current_max(new_st)]"], [""])
-                             else (new_st, [""],["redifinition of " ^id ^ " at "^(string_of_int 1) ^ " "^ (string_of_int 2) ]) (* Update back to row and col *)
-    | AST_r_dec(id,idloc) ->   let (new_st, inserted) = (insert_st id Real st) in
-                                if inserted then (new_st, ["real"], [""])
-                                else (new_st, [""],["redifinition of " ^id ^ " "^(string_of_int 1) ^ " "^ (string_of_int 2)])
+    | AST_i_dec(id,idloc) -> 
+      let (new_st, inserted) = (insert_st id Int st) in
+      if inserted then (new_st, [], [])
+      else (new_st, [],[(complaint idloc "redeclaration")]) (* Update back to row and col *)
+    | AST_r_dec(id,idloc) ->
+      let (new_st, inserted) = (insert_st id Real st) in
+      if inserted then (new_st, [], [])
+      else (new_st, [],[(complaint idloc "redeclaration")])
     | AST_read(id, idloc) ->   translate_read id idloc st
     | AST_write(expr)     ->   translate_write expr st
+    | AST_assign(id,expr,vloc,aloc) -> translate_assign id expr vloc aloc st 
     | AST_if(expr , sl)   ->   translate_if expr sl st
     | AST_while(expr, sl) ->   translate_while expr sl st
     | _ -> st, [], []
@@ -1085,21 +1087,31 @@ and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-    let (new_st, typ, setup_code , oper, err_msg) = translate_expr expr st in
-    (st, setup_code, err_msg)
+    let (new_st, typ, setup_code , op, err_msg) = translate_expr expr st in
+    match err_msg with
+    | [] -> 
+      (match typ with
+      | Int -> 
+        let result_code = setup_code @ ["putint("^op.text^");"] in 
+        (new_st, result_code, [] ) 
+      | Real ->
+        let result_code = setup_code @ ["putreal("^op.text^");"] in 
+        (new_st, result_code, [] ))
+    | _ -> (st, [], err_msg)
 
 
 (* Assign logic *)
 (* id value check for id and type crash check for left right expr*)
 and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:symtab)
     : symtab * string list * string list =
-  (* let errors, new_st = type_clash_assign_check id vloc rhs aloc st in
-  match errors with 
-  | [] -> 
-
-  | _ -> new_st, [], errors *)
-
-  (st, [], [])
+   let errors, new_st = type_clash_assign_check id vloc rhs aloc st in
+   (match errors with
+   | [] ->
+    let (expr_st, typ, setup_code , op, err_msg) = translate_expr rhs new_st in 
+    let (_, id_text, _, _) = lookup_st id expr_st vloc in
+    let result_code = setup_code @ [id_text ^ " = " ^ op.text ^";"] in
+    (expr_st, result_code, [])
+   | _ -> (new_st, [], errors))
 
 and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
@@ -1300,9 +1312,19 @@ let main () =
 if !Sys.interactive then () else main ();;
 
 
-let p = "int a := 1;";;
+let p = "int a := 1;
+real b := 2.0;
+real c := float(a) * b;";;
+let p_parse_tree = parse ecg_parse_table p;;
+let p_syntax_tree = ast_ize_prog p_parse_tree;;
+(* #trace translate_ast;;
+#trace translate_sl;;
+#trace translate_s;; *)
+let (i,j,code,errors) = translate_ast p_syntax_tree;;
+(* #untrace translate_ast;; *)
 (* AST tree for: 1*1 - 1*1 *)
-let id1 = AST_int("1",(1,1));;
+(* let id1 = AST_int("1",(1,1));;
 let operation = AST_binop("*",id1,id1,(1,1));;
 let complex_op = AST_binop("-",operation,operation,(1,1));;
-let result = translate_expr complex_op empty_symtab;;
+let result = translate_expr complex_op empty_symtab;; *)
+(* #use "ecl.ml";; *)
