@@ -1168,7 +1168,7 @@ and translate_expr (expr:ast_e) (st:symtab)
     | [],[] -> 
       let rsub_st, rsub_tp, rsub_setup, rsub_op, rsub_errors = translate_expr rexpr st in
       let lsub_st, lsub_tp, lsub_setup, lsub_op, lsub_errors = translate_expr lexpr rsub_st in
-      let result_st = {max_var=rsub_st.max_var; max_temp=rsub_st.max_temp+1; scopes=rsub_st.scopes} in
+      let result_st = {max_var=lsub_st.max_var; max_temp=lsub_st.max_temp+1; scopes=lsub_st.scopes} in
       let temp_address = max_temp_addr result_st in 
       let result_text = "t["^(string_of_int temp_address)^"]" in 
       let result_setup = rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
@@ -1301,6 +1301,8 @@ if !Sys.interactive then () else main ();;
 
 
 let p = "int a := 1;";;
+(* AST tree for: 1*1 - 1*1 *)
 let id1 = AST_int("1",(1,1));;
 let operation = AST_binop("*",id1,id1,(1,1));;
-let result = translate_expr operation empty_symtab;;
+let complex_op = AST_binop("-",operation,operation,(1,1));;
+let result = translate_expr complex_op empty_symtab;;
