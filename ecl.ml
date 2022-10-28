@@ -784,13 +784,15 @@ type symtab =
   { 
     max_var : int;
     max_temp : int;
+    max_jump: int;
     scopes     : scope_info list
   };;
-let empty_symtab = { scopes = []; max_var=0; max_temp=0 };;
+let empty_symtab = { scopes = []; max_var=0; max_temp=0; max_jump=0 };;
 
 (* Open a new scope, in which variable names can be reused. *)
 let new_scope (st:symtab) : symtab =
-  { scopes     = { variables = [] } :: st.scopes; max_var = 0; max_temp = 0 };;
+  { scopes     = { variables = [] } :: st.scopes; max_var = st.max_var;
+                   max_temp = st.max_temp; max_jump=st.max_jump};;
 
 (* Executed at end of statement list to erase variables from table. *)
 let end_scope (st:symtab) : symtab =
@@ -798,7 +800,7 @@ let end_scope (st:symtab) : symtab =
            | []            -> raise (Failure "no scopes left to pop")
            | _ :: surround -> surround in
   (* Not sure about this *)
-  { scopes     = ss; max_var = st.max_var; max_temp=st.max_temp }
+  { scopes     = ss; max_var = st.max_var; max_temp=st.max_temp; max_jump=st.max_jump }
 
 (* An expression in the extended calculator language can appear
    - as an operand in a bigger expression -- arithmetic, comparison, float/trunc
@@ -844,7 +846,7 @@ let insert_st (id:string) (t:tp) (st:symtab) : symtab * bool =
       | None   ->
           ({ scopes     =
                { variables = (id, t, new_mem_addr (st)) :: scope.variables }
-               :: surround; max_var = st.max_var+1; max_temp = st.max_temp}, true);;
+               :: surround; max_var = st.max_var+1; max_temp = st.max_temp; max_jump=st.max_jump}, true);;
 
 (* Look id up in symbol table.  If not found, insert to limit redundant
    subsequent errors. *)
@@ -1063,8 +1065,8 @@ and translate_s (s:ast_s) (st:symtab)
     | AST_read(id, idloc) ->   translate_read id idloc st
     | AST_write(expr)     ->   translate_write expr st
     | AST_assign(id,expr,vloc,aloc) -> translate_assign id expr vloc aloc st 
-    | AST_if(expr , sl)   ->   translate_if expr sl st
-    | AST_while(expr, sl) ->   translate_while expr sl st
+    | AST_if(cond , sl)   ->   translate_if cond sl st
+    | AST_while(cond, sl) ->   translate_while cond sl st
     | _ -> st, [], []
   
 
@@ -1081,8 +1083,8 @@ and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     let (_, _, _, _) = lookup_st id st loc in
     let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
     match typ with
-    | Unknown -> (sym_tab, [""], [err_msg]) 
-    | _       -> (sym_tab, [targ_code], [""])
+    | Unknown -> (sym_tab, [], [err_msg]) 
+    | _       -> (sym_tab, [targ_code], [])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
@@ -1115,24 +1117,44 @@ and translate_assign (id:string) (rhs:ast_e) (vloc:row_col) (aloc:row_col) (st:s
 
 and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
-    (* new symtab, code, error messages *)
-    (* NEED ID CHECK *)
-    (* NEED OPERAND CHECK  *)
   match c with      (* sanity check *)
   | AST_binop(_, _, _, _) ->
-  (*
-    NOTICE: your code here
-  *)
-      (st, [], [])
+  let new_st, c_tp, setup_code, op, errors = translate_expr c st in
+  (match errors with
+    | [] ->
+      (* add scope using new_scope, and increment temp vars count and jump count by 1 *)
+      let temp_st = new_scope st in
+      let result_st = {scopes=temp_st.scopes; max_var=temp_st.max_var;
+                      max_temp=temp_st.max_temp+1; max_jump=temp_st.max_jump+1} in
+      let temp_address = max_temp_addr result_st in
+      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      let result_setup = setup_code@["if(!"^result_text^") goto L"
+                        ^(string_of_int result_st.max_jump)^";"] in 
+      (* translate block of code *)
+      let (sl_st, sl_code, sl_errs) = translate_sl sl result_st in
+      (match sl_errs with
+        | [] ->
+          let final_setup = result_setup@sl_code@["L"^(string_of_int result_st.max_jump)^":;"] in
+          (* end scope *)
+          let exit_st = end_scope sl_st in
+          (exit_st, final_setup, [])
+        | _ -> ((end_scope sl_st), [], sl_errs))
+    | _ -> (new_st, [], errors))
   | _ -> raise (Failure "unexpected expression type as condition")
 
 and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
     : symtab * string list * string list =
     (* new symtab, code, error messages *)
-  (*
-    NOTICE: your code here
-  *)
-  (st, [], [])
+  match c with      (* sanity check *)
+  | AST_binop(_, _, _, _) ->
+  (* let new_st, c_tp, setup_code, op, errors = translate_expr c in
+  match errors with
+  | [] ->
+    
+  | _ ->  *)
+      (st, [], [])
+  | _ -> raise (Failure "unexpected expression type as condition")
+
 
 and translate_expr (expr:ast_e) (st:symtab)
     : symtab * tp * string list * operand * string list =
@@ -1151,7 +1173,8 @@ and translate_expr (expr:ast_e) (st:symtab)
     (match errors with
     | [] -> 
       let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
-      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes} in
+      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1;
+                         scopes=sub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
       let result_text = "t["^(string_of_int temp_address)^"]" in 
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
@@ -1164,7 +1187,7 @@ and translate_expr (expr:ast_e) (st:symtab)
     (match errors with
     | [] -> 
       let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
-      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes} in
+      let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
       let result_text = "t["^(string_of_int temp_address)^"]" in 
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
@@ -1180,7 +1203,7 @@ and translate_expr (expr:ast_e) (st:symtab)
     | [],[] -> 
       let rsub_st, rsub_tp, rsub_setup, rsub_op, rsub_errors = translate_expr rexpr st in
       let lsub_st, lsub_tp, lsub_setup, lsub_op, lsub_errors = translate_expr lexpr rsub_st in
-      let result_st = {max_var=lsub_st.max_var; max_temp=lsub_st.max_temp+1; scopes=lsub_st.scopes} in
+      let result_st = {max_var=lsub_st.max_var; max_temp=lsub_st.max_temp+1; scopes=lsub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
       let result_text = "t["^(string_of_int temp_address)^"]" in 
       let result_setup = rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
@@ -1314,13 +1337,15 @@ if !Sys.interactive then () else main ();;
 
 let p = "int a := 1;
 real b := 2.0;
-real c := float(a) * b;";;
+real c := float(a) * b;
+if b == c then b := b + 1.0; end;";;
 let p_parse_tree = parse ecg_parse_table p;;
 let p_syntax_tree = ast_ize_prog p_parse_tree;;
 (* #trace translate_ast;;
 #trace translate_sl;;
 #trace translate_s;; *)
 let (i,j,code,errors) = translate_ast p_syntax_tree;;
+Printf.printf " %s\n}\n" code;
 (* #untrace translate_ast;; *)
 (* AST tree for: 1*1 - 1*1 *)
 (* let id1 = AST_int("1",(1,1));;
