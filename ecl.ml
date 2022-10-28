@@ -1147,13 +1147,30 @@ and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
     (* new symtab, code, error messages *)
   match c with      (* sanity check *)
   | AST_binop(_, _, _, _) ->
-  (* let new_st, c_tp, setup_code, op, errors = translate_expr c in
-  match errors with
-  | [] ->
-    
-  | _ ->  *)
-      (st, [], [])
-  | _ -> raise (Failure "unexpected expression type as condition")
+    let new_st, c_tp, setup_code, op, errors = translate_expr c st in
+    (match errors with
+      | [] ->
+        (* add scope using new_scope, and increment temp vars count by 1 and jump count by 2 *)
+        let temp_st = new_scope st in
+        let result_st = {scopes=temp_st.scopes; max_var=temp_st.max_var;
+                        max_temp=temp_st.max_temp+1; max_jump=temp_st.max_jump+2} in
+        let temp_address = max_temp_addr result_st in
+        let repeat_jump_label = "L"^(string_of_int (result_st.max_jump-1))in
+        let skip_jump_label = "L"^(string_of_int result_st.max_jump)in 
+        let temp_text = "t["^(string_of_int temp_address)^"]" in 
+        let result_setup = [repeat_jump_label^":"]@setup_code@["if(!"^temp_text^") goto "
+                          ^skip_jump_label^";"] in 
+        (* translate block of code *)
+        let (sl_st, sl_code, sl_errs) = translate_sl sl result_st in
+        (match sl_errs with
+          | [] ->
+            let final_setup = result_setup@sl_code@[skip_jump_label^":;"] in
+            (* end scope *)
+            let exit_st = end_scope sl_st in
+            (exit_st, final_setup, [])
+          | _ -> ((end_scope sl_st), [], sl_errs))
+      | _ -> (new_st, [], errors))
+    | _ -> raise (Failure "unexpected expression type as condition")
 
 
 and translate_expr (expr:ast_e) (st:symtab)
@@ -1338,7 +1355,11 @@ if !Sys.interactive then () else main ();;
 let p = "int a := 1;
 real b := 2.0;
 real c := float(a) * b;
-if b == c then b := b + 1.0; end;";;
+if b == c then b := b + 1.0; end;
+while a <> 0
+do
+a := a -1;
+end;";;
 let p_parse_tree = parse ecg_parse_table p;;
 let p_syntax_tree = ast_ize_prog p_parse_tree;;
 (* #trace translate_ast;;
