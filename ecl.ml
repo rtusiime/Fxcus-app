@@ -1084,7 +1084,8 @@ and translate_read (id:string) (loc:row_col) (* of variable *) (st:symtab)
     let (typ, targ_code, err_msg, sym_tab) = lookup_st id st loc in
     match typ with
     | Unknown -> (sym_tab, [], [err_msg]) 
-    | _       -> (sym_tab, [targ_code], [])
+    | Real       -> (sym_tab, [targ_code^" = getreal();"], [])
+    | Int       -> (sym_tab, [targ_code^" = getint();"], [])
 
 and translate_write (expr:ast_e) (st:symtab)
     : symtab * string list * string list =
@@ -1099,7 +1100,7 @@ and translate_write (expr:ast_e) (st:symtab)
       | Real ->
         let result_code = setup_code @ ["putreal("^op.text^");"] in 
         (new_st, result_code, [] ))
-    | _ -> (st, [], err_msg)
+      | _ -> (st, [], err_msg)
 
 
 (* Assign logic *)
@@ -1127,7 +1128,8 @@ and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
       let result_st = {scopes=temp_st.scopes; max_var=temp_st.max_var;
                       max_temp=temp_st.max_temp+1; max_jump=temp_st.max_jump+1} in
       let temp_address = max_temp_addr result_st in
-      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      let result_text = if c_tp = Int then "ti["^(string_of_int temp_address)^"]" 
+      else "tr["^(string_of_int temp_address)^"]"  in 
       let result_setup = setup_code@["if(!"^result_text^") goto L"
                         ^(string_of_int result_st.max_jump)^";"] in 
       (* translate block of code *)
@@ -1157,7 +1159,8 @@ and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
         let temp_address = max_temp_addr result_st in
         let repeat_jump_label = "L"^(string_of_int (result_st.max_jump-1))in
         let skip_jump_label = "L"^(string_of_int result_st.max_jump)in 
-        let temp_text = "t["^(string_of_int temp_address)^"]" in 
+        let temp_text = if c_tp = Int then "ti["^(string_of_int temp_address)^"]" 
+        else "tr["^(string_of_int temp_address)^"]"  in 
         let result_setup = [repeat_jump_label^":"]@setup_code@["if(!"^temp_text^") goto "
                           ^skip_jump_label^";"] in 
         (* translate block of code *)
@@ -1179,11 +1182,10 @@ and translate_expr (expr:ast_e) (st:symtab)
   match expr with
   | AST_int(i, _) -> (st, Int, [], {text = i; kind = Atom}, [])
   | AST_real(i,_) -> (st, Real, [], {text = i; kind = Atom}, [])
-  | AST_id(i,_)  -> 
-    let (i_tp, errors, new_st) = get_expr_type expr st in
-    (match errors with
-    | [] -> (st, i_tp, [], {text = i; kind = Atom}, [])
-    | _ -> (new_st, i_tp, [], {text = i; kind = Atom}, errors)) (* In this case i_tp will be Unknown *)
+  | AST_id(i,idloc)  -> let i_tp, id_text, id_err, new_st = lookup_st i st idloc in
+                    (match id_err with
+                    | "" -> (st, i_tp, [], {text = id_text ; kind = Atom}, [])
+                    | _ -> (new_st, i_tp, [], {text = id_text; kind = Atom}, [id_err]))
   (* Always put complex expr in tempories *)
   | AST_float(s_expr,_) ->
     let (expr_tp, errors, new_st) = get_expr_type expr st in
@@ -1193,7 +1195,8 @@ and translate_expr (expr:ast_e) (st:symtab)
       let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1;
                          scopes=sub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
-      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      let result_text =  if sub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
+      else "tr["^(string_of_int temp_address)^"]" in 
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
       let result_setup = sub_setup@[result_text^" = to_real("^sub_op.text^");"] in
       let result_operand = {text=result_text; kind = Temp(temp_address)} in
@@ -1206,7 +1209,8 @@ and translate_expr (expr:ast_e) (st:symtab)
       let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
       let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
-      let result_text = "t["^(string_of_int temp_address)^"]" in 
+      let result_text = if sub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
+      else "tr["^(string_of_int temp_address)^"]" in
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
       let result_setup = sub_setup@[result_text^" = to_int("^sub_op.text^");"] in
       let result_operand = {text=result_text; kind = Temp(temp_address)} in
@@ -1222,8 +1226,10 @@ and translate_expr (expr:ast_e) (st:symtab)
       let lsub_st, lsub_tp, lsub_setup, lsub_op, lsub_errors = translate_expr lexpr rsub_st in
       let result_st = {max_var=lsub_st.max_var; max_temp=lsub_st.max_temp+1; scopes=lsub_st.scopes; max_jump=st.max_jump} in
       let temp_address = max_temp_addr result_st in 
-      let result_text = "t["^(string_of_int temp_address)^"]" in 
-      let result_setup = rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
+      let result_text = if lsub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
+                                           else "tr["^(string_of_int temp_address)^"]"  in 
+      let result_setup = if op = "<>" then rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ "!=" ^ rsub_op.text ^";"] else 
+        rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
       let result_operand = {text=result_text; kind = Temp(temp_address)} in
       (result_st, lsub_tp, result_setup, result_operand, [])
     | _,[] -> (lnew_st, Unknown, [], {text="err"; kind=Atom}, lerrors)
@@ -1352,7 +1358,7 @@ let main () =
 if !Sys.interactive then () else main ();;
 
 
-let p = "int a := 1;
+(* let p = "int a := 1;
 real b := 2.0;
 real c := float(a) * b;
 if b == c then b := b + 1.0; end;
@@ -1373,4 +1379,4 @@ Printf.printf " %s\n}\n" code;
 let operation = AST_binop("*",id1,id1,(1,1));;
 let complex_op = AST_binop("-",operation,operation,(1,1));;
 let result = translate_expr complex_op empty_symtab;; *)
-(* #use "ecl.ml";; *)
+#use "ecl.ml";; *)
