@@ -787,7 +787,7 @@ type symtab =
     max_jump: int;
     scopes     : scope_info list
   };;
-let empty_symtab = { scopes = []; max_var=0; max_temp=0; max_jump=0 };;
+let empty_symtab = { scopes = []; max_var=0; max_temp=0; max_jump=(-1) };;
 
 (* Open a new scope, in which variable names can be reused. *)
 let new_scope (st:symtab) : symtab =
@@ -830,7 +830,7 @@ let name_match_st id = fun (sym, _, _) -> id = sym;;
     addresses for variables.  These routines are placeholders for
     functionality that you probably want to roll into the symbol table.
 *)
-let new_mem_addr (st: symtab) = st.max_var + 1;;
+let new_mem_addr (st: symtab) = st.max_var;;
 let max_mem_addr (st: symtab) = st.max_var;;
 let max_temp_addr (st: symtab) = st.max_temp;;
 
@@ -1120,7 +1120,7 @@ and translate_if (c:ast_e) (sl:ast_sl) (st:symtab)
       let temp_st = new_scope st in
       let result_st = {scopes=temp_st.scopes; max_var=temp_st.max_var;
                       max_temp=temp_st.max_temp+1; max_jump=temp_st.max_jump+1} in
-      let temp_address = max_temp_addr result_st in
+      let temp_address = (max_temp_addr result_st) -1 in
       let result_text = if c_tp = Int then "ti["^(string_of_int temp_address)^"]" 
       else "tr["^(string_of_int temp_address)^"]"  in 
       let result_setup = setup_code@["if(!"^result_text^") goto L"
@@ -1149,7 +1149,7 @@ and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
         let temp_st = new_scope st in
         let result_st = {scopes=temp_st.scopes; max_var=temp_st.max_var;
                         max_temp=temp_st.max_temp+1; max_jump=temp_st.max_jump+2} in
-        let temp_address = max_temp_addr result_st in
+        let temp_address = (max_temp_addr result_st) -1 in
         let repeat_jump_label = "L"^(string_of_int (result_st.max_jump-1))in
         let skip_jump_label = "L"^(string_of_int result_st.max_jump)in 
         let temp_text = if c_tp = Int then "ti["^(string_of_int temp_address)^"]" 
@@ -1160,7 +1160,7 @@ and translate_while (c:ast_e) (sl:ast_sl) (st:symtab)
         let (sl_st, sl_code, sl_errs) = translate_sl sl result_st in
         (match sl_errs with
           | [] ->
-            let final_setup = result_setup@sl_code@[skip_jump_label^":;"] in
+            let final_setup = result_setup@sl_code@["goto "^repeat_jump_label^";";skip_jump_label^":;"] in
             (* end scope *)
             let exit_st = end_scope sl_st in
             (exit_st, final_setup, [])
@@ -1187,7 +1187,7 @@ and translate_expr (expr:ast_e) (st:symtab)
       let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
       let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1;
                          scopes=sub_st.scopes; max_jump=st.max_jump} in
-      let temp_address = max_temp_addr result_st in 
+      let temp_address = (max_temp_addr result_st) -1 in
       let result_text =  if sub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
       else "tr["^(string_of_int temp_address)^"]" in 
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
@@ -1201,7 +1201,7 @@ and translate_expr (expr:ast_e) (st:symtab)
     | [] -> 
       let sub_st, sub_tp, sub_setup, sub_op, sub_errors = translate_expr s_expr st in
       let result_st = {max_var=sub_st.max_var; max_temp=sub_st.max_temp+1; scopes=sub_st.scopes; max_jump=st.max_jump} in
-      let temp_address = max_temp_addr result_st in 
+      let temp_address = (max_temp_addr result_st) -1 in
       let result_text = if sub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
       else "tr["^(string_of_int temp_address)^"]" in
       (* NOT SURE WHICH DIRECTION TO CONCAT, CONCAT AT THE END FOR NOW *)
@@ -1218,11 +1218,18 @@ and translate_expr (expr:ast_e) (st:symtab)
       let rsub_st, rsub_tp, rsub_setup, rsub_op, rsub_errors = translate_expr rexpr st in
       let lsub_st, lsub_tp, lsub_setup, lsub_op, lsub_errors = translate_expr lexpr rsub_st in
       let result_st = {max_var=lsub_st.max_var; max_temp=lsub_st.max_temp+1; scopes=lsub_st.scopes; max_jump=st.max_jump} in
-      let temp_address = max_temp_addr result_st in 
+      let temp_address = (max_temp_addr result_st) -1 in (* off set for 0 index*)
       let result_text = if lsub_tp = Int then "ti["^(string_of_int temp_address)^"]" 
                                            else "tr["^(string_of_int temp_address)^"]"  in 
-      let result_setup = if op = "<>" then rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ "!=" ^ rsub_op.text ^";"] else 
-        rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"] in
+      (* Special case handling *)
+      let result_setup = 
+      if op = "<>" then 
+        rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ "!=" ^ rsub_op.text ^";"] else
+      if (op = "/" && lsub_tp = Int) then 
+        rsub_setup@lsub_setup@[result_text^" = divide_int(" ^ lsub_op.text ^ "," ^ rsub_op.text ^");"] else
+      if (op = "/" && lsub_tp = Real) then     
+        rsub_setup@lsub_setup@[result_text^" = divide_real(" ^ lsub_op.text ^ "," ^ rsub_op.text ^");"] else
+          rsub_setup@lsub_setup@[result_text^" = " ^ lsub_op.text ^ op ^ rsub_op.text ^";"]in
       let result_operand = {text=result_text; kind = Temp(temp_address)} in
       (result_st, lsub_tp, result_setup, result_operand, [])
     | _,[] -> (lnew_st, Unknown, [], {text="err"; kind=Atom}, lerrors)
@@ -1340,30 +1347,26 @@ let main () =
           begin
             print_string prologue;
             Printf.printf " int64_t i[%d]; double *r = (double *) i;\n"
-                          (max_addr + 1);
+                          (max_addr);
             Printf.printf " int64_t ti[%d]; double *tr = (double *) ti;\n\n"
-                          (max_temp + 1);
+                          (max_temp);
             Printf.printf " %s\n}\n" code;
           end;;
 
 (* Execute function "main" iff run as a stand-alone program. *)
 if !Sys.interactive then () else main ();;
-
-(* let p = "read real a;
-write a;
-read int b;
-write b;
-a := a + b;
-a := float(a);
-if a<>b then
-real b := float(30);
-real b := b;
+(*
+let p = "read int a;
+while a <> 10
+do
+a := a + 1;
 end;";;
 let p_parse_tree = parse ecg_parse_table p;;
 let p_syntax_tree = ast_ize_prog p_parse_tree;;
 # trace binary_check;;
-(* # trace get_expr_type;; *)
-let (i,j,code,errors) = translate_ast p_syntax_tree;; *)
+# trace translate_s;;
+let (i,j,code,errors) = translate_ast p_syntax_tree;;
+*)
 (* let p = "int a := 1;
 real b := 2.0;
 real c := float(a) * b;
