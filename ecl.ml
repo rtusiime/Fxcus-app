@@ -998,15 +998,12 @@ and binary_check (lhs: ast_e) (rhs: ast_e) (op_loc: row_col) (st: symtab)
   let (l_tp, lexpr_errors, new_lexpr_st) = get_expr_type lhs st in
   let (r_tp, rexpr_errors, new_rexpr_st) = get_expr_type rhs new_lexpr_st in
   let merged_errors = (append lexpr_errors rexpr_errors) in 
-  match r_tp with 
-  | Unknown -> merged_errors, Unknown, new_lexpr_st 
-  | l_tp -> [], l_tp, st
-  | _ ->
-    (match l_tp with 
-    | Unknown -> 
-      (cons (complaint op_loc ("invalid operation between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))) lexpr_errors), 
-        Unknown ,new_lexpr_st
-    | _ -> [(complaint op_loc "invalid opeartion between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))], l_tp, st )
+  if (r_tp = Unknown && l_tp = Unknown) then (merged_errors, Unknown, new_rexpr_st) else
+  if l_tp = Unknown then (lexpr_errors, Unknown, new_lexpr_st) else
+  if r_tp = Unknown then (rexpr_errors, Unknown, new_rexpr_st) else
+  (* Both expr type are valid *)
+  if l_tp = r_tp then [], l_tp, st else
+    ([(complaint op_loc "type crash")], Unknown, st)
 
 
  (* error checking routine *)
@@ -1357,7 +1354,16 @@ let main () =
 (* Execute function "main" iff run as a stand-alone program. *)
 if !Sys.interactive then () else main ();;
 
-
+(* let p = "read real a;
+write a;
+read int b;
+write b;
+a := a + b;";;
+let p_parse_tree = parse ecg_parse_table p;;
+let p_syntax_tree = ast_ize_prog p_parse_tree;;
+# trace binary_check;;
+(* # trace get_expr_type;; *)
+let (i,j,code,errors) = translate_ast p_syntax_tree;; *)
 (* let p = "int a := 1;
 real b := 2.0;
 real c := float(a) * b;
