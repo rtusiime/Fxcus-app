@@ -982,16 +982,12 @@ let rec get_expr_type (expr: ast_e) (st: symtab) : tp * string list * symtab=
 (* ET *)
 and unary_check (expr: ast_e) (op_loc: row_col) (op_tp: tp) (st: symtab): string list * tp * symtab = 
   let (expr_tp, expr_errors, new_expr_st) = get_expr_type expr st in
-  match expr_tp with
-  (* invalid type in evaluating expr, throw expr eror but not type crash *)
-  | Unknown -> (expr_errors, Unknown, new_expr_st)
-  (* type match, no errors*)
-  | op_tp -> [], expr_tp, st
-  (* type conflict, add conflict *)
-  | _ -> 
-    (match op_tp with 
-    | Int -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to float()")], Unknown, st
-    | Real -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to trunc()")], Unknown, st)
+  if expr_tp = Unknown then (expr_errors, Unknown, new_expr_st) else
+  if expr_tp = op_tp then ([], expr_tp, st) else
+  (match op_tp with 
+  | Int -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to float()")], Unknown, st
+  | Real -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to trunc()")], Unknown, st
+  | Unknown -> [(complaint op_loc "Incompatible type "^(type_to_string expr_tp)^" supplied to trunc()")], Unknown, st) (* dummy to suppres warning*)
 
 and binary_check (lhs: ast_e) (rhs: ast_e) (op_loc: row_col) (st: symtab)
   :string list * tp * symtab =
@@ -1017,13 +1013,12 @@ and type_clash_assign_check (id: string) (id_loc: row_col) (rhs: ast_e)
   let (l_tp, _, id_errors, new_id_st) = lookup_st id st id_loc in
   let (r_tp, expr_errors, new_expr_st) = get_expr_type rhs new_id_st in 
   let merged_errors = cons id_errors expr_errors in
-  match r_tp with
-  | Unknown -> merged_errors, new_id_st
-  | l_tp -> [], st
-  | _ -> 
-    (match l_tp with
-    | Unknown -> [(complaint assign_loc "invalid assign between "^ (type_to_string l_tp) ^ " and "^(type_to_string r_tp)); id_errors], new_id_st
-    | _ -> [(complaint assign_loc "invalid assign between "^(type_to_string l_tp)^" and "^(type_to_string r_tp))], st);;
+  if (r_tp = Unknown && l_tp = Unknown) then (merged_errors, new_expr_st) else
+  if l_tp = Unknown then (expr_errors, new_id_st) else
+  if r_tp = Unknown then (expr_errors, new_expr_st) else
+  (* Both expr type are valid *)
+  if l_tp = r_tp then ([], st) else
+    ([(complaint assign_loc "type crash")], st)
     
 (* and id_check (id: string) (id_loc: row_col) (st: symtab)
     : string list * symtab = 
@@ -1054,11 +1049,11 @@ and translate_s (s:ast_s) (st:symtab)
     | AST_i_dec(id,idloc) -> 
       let (new_st, inserted) = (insert_st id Int st) in
       if inserted then (new_st, [], [])
-      else (new_st, [],[(complaint idloc "redeclaration")]) (* Update back to row and col *)
+      else (new_st, [],[(complaint idloc "redeclaration of "^id)]) (* Update back to row and col *)
     | AST_r_dec(id,idloc) ->
       let (new_st, inserted) = (insert_st id Real st) in
       if inserted then (new_st, [], [])
-      else (new_st, [],[(complaint idloc "redeclaration")])
+      else (new_st, [],[(complaint idloc "redeclaration of "^id)])
     | AST_read(id, idloc) ->   translate_read id idloc st
     | AST_write(expr)     ->   translate_write expr st
     | AST_assign(id,expr,vloc,aloc) -> translate_assign id expr vloc aloc st 
@@ -1096,8 +1091,9 @@ and translate_write (expr:ast_e) (st:symtab)
         (new_st, result_code, [] ) 
       | Real ->
         let result_code = setup_code @ ["putreal("^op.text^");"] in 
-        (new_st, result_code, [] ))
-      | _ -> (st, [], err_msg)
+        (new_st, result_code, [] )
+      | Unknown -> raise (Failure "unexpected Unknown type when there is no error msg in translate_write"))
+    | _ -> (st, [], err_msg)
 
 
 (* Assign logic *)
@@ -1232,7 +1228,6 @@ and translate_expr (expr:ast_e) (st:symtab)
     | _,[] -> (lnew_st, Unknown, [], {text="err"; kind=Atom}, lerrors)
     | [],_ -> (rnew_st, Unknown, [], {text="err"; kind=Atom},rerrors)
     | _,_ -> (rnew_st, Unknown, [], {text="err"; kind=Atom},(lerrors@rerrors)))
-  | _ -> (st, Unknown, [], {text = ""; kind = Atom}, [])
 
 (* Perform static checks on AST.  Return output code and error messages as
    glued-together strings.  Empty error string means tree was error free. *)
@@ -1358,7 +1353,12 @@ if !Sys.interactive then () else main ();;
 write a;
 read int b;
 write b;
-a := a + b;";;
+a := a + b;
+a := float(a);
+if a<>b then
+real b := float(30);
+real b := b;
+end;";;
 let p_parse_tree = parse ecg_parse_table p;;
 let p_syntax_tree = ast_ize_prog p_parse_tree;;
 # trace binary_check;;
