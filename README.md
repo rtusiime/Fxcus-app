@@ -1,2 +1,2 @@
-# CSC254-HW3
-Creating a translator for a simple calculator grammar in Ocaml
+# Fxcus App
+Simple chrome extension to throttle connectivity to specific websites.
