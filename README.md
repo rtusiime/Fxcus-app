@@ -1,2 +1,2 @@
-# Fxcus App
-Simple chrome extension to throttle connectivity to specific websites.
+# Ocaml Calculator
+Creating a translator for a simple calculator grammar in Ocaml.
